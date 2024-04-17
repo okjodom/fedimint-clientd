@@ -33,25 +33,26 @@
           paths = [ "Cargo.toml" "Cargo.lock" ".cargo" "src" ];
         };
 
-        toolchainArgs = let llvmPackages = pkgs.llvmPackages_11;
-        in {
-          extraRustFlags = "--cfg tokio_unstable";
+        toolchainArgs =
+          let llvmPackages = pkgs.llvmPackages_11;
+          in {
+            extraRustFlags = "--cfg tokio_unstable";
 
-          components = [ "rustc" "cargo" "clippy" "rust-analyzer" "rust-src" ];
+            components = [ "rustc" "cargo" "clippy" "rust-analyzer" "rust-src" ];
 
-          args = {
-            nativeBuildInputs =
-              [ pkgs.wasm-bindgen-cli pkgs.geckodriver pkgs.wasm-pack ]
-              ++ lib.optionals (!pkgs.stdenv.isDarwin) [ pkgs.firefox ];
+            args = {
+              nativeBuildInputs =
+                [ pkgs.wasm-bindgen-cli pkgs.geckodriver pkgs.wasm-pack ]
+                  ++ lib.optionals (!pkgs.stdenv.isDarwin) [ pkgs.firefox ];
+            };
+          } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+            # on Darwin newest stdenv doesn't seem to work
+            # linking rocksdb
+            stdenv = pkgs.clang11Stdenv;
+            clang = llvmPackages.clang;
+            libclang = llvmPackages.libclang.lib;
+            clang-unwrapped = llvmPackages.clang-unwrapped;
           };
-        } // lib.optionalAttrs pkgs.stdenv.isDarwin {
-          # on Darwin newest stdenv doesn't seem to work
-          # linking rocksdb
-          stdenv = pkgs.clang11Stdenv;
-          clang = llvmPackages.clang;
-          libclang = llvmPackages.libclang.lib;
-          clang-unwrapped = llvmPackages.clang-unwrapped;
-        };
 
         # all standard toolchains provided by flakebox
         toolchainsStd = flakeboxLib.mkStdFenixToolchains toolchainArgs;
@@ -73,17 +74,32 @@
                 pname = "flexbox-multibuild";
                 src = rustSrc;
               }).overrideArgs commonArgs;
-            in rec {
+            in
+            rec {
               workspaceDeps = craneLib.buildWorkspaceDepsOnly { };
+
               workspaceBuild =
                 craneLib.buildWorkspace { cargoArtifacts = workspaceDeps; };
+
               fedimint-clientd = craneLib.buildPackageGroup {
                 pname = "fedimint-clientd";
-                packages = [ "fedimint-clientd" ];
+                packages = [
+                  "fedimint-clientd"
+                ];
                 mainProgram = "fedimint-clientd";
               };
+
+              fedimint-clientd-oci = pkgs.dockerTools.buildLayeredImage {
+                name = "fedimint-clientd";
+                contents = [ fedimint-clientd ];
+                config = {
+                  Cmd = [ "${fedimint-clientd}/bin/fedimint-clientd" ];
+                };
+              };
+
             });
-      in {
+      in
+      {
         legacyPackages = outputs;
         packages = { default = outputs.fedimint-clientd; };
         devShells = flakeboxLib.mkShells {

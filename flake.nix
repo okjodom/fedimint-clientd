@@ -11,12 +11,12 @@
     };
 
     flakebox = {
-      url = "github:dpc/flakebox?rev=226d584e9a288b9a0471af08c5712e7fac6f87dc";
+      url = "github:flakebox/flakebox?rev=226d584e9a288b9a0471af08c5712e7fac6f87dc";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.fenix.follows = "fenix";
     };
 
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-utils = { url = "github:numtide/flake-utils"; };
   };
 
   outputs = { self, nixpkgs, flakebox, fenix, flake-utils }:
@@ -25,13 +25,6 @@
         pkgs = import nixpkgs { inherit system; };
         lib = pkgs.lib;
         flakeboxLib = flakebox.lib.${system} { };
-        rustSrc = flakeboxLib.filterSubPaths {
-          root = builtins.path {
-            name = "fedimint-clientd";
-            path = ./.;
-          };
-          paths = [ "Cargo.toml" "Cargo.lock" ".cargo" "src" ];
-        };
 
         toolchainArgs =
           let llvmPackages = pkgs.llvmPackages_11;
@@ -67,12 +60,57 @@
             [ pkgs.darwin.apple_sdk.frameworks.SystemConfiguration ];
           nativeBuildInputs = [ pkgs.pkg-config ];
         };
+
+        commonSrc = builtins.path { path = ./.; name = "fedimint-clientd"; };
+
+        filterWorkspaceDepsBuildFilesRegex = [ "Cargo.lock" "Cargo.toml" ".cargo" ".cargo/.*" ".config" ".config/.*" ".*/Cargo.toml" ];
+
+        filterSrcWithRegexes = regexes: src:
+          let
+            basePath = toString src + "/";
+          in
+          lib.cleanSourceWith {
+            filter = (path: type:
+              let
+                relPath = lib.removePrefix basePath (toString path);
+                includePath =
+                  (type == "directory") ||
+                  lib.any
+                    (re: builtins.match re relPath != null)
+                    regexes;
+              in
+              # uncomment to debug:
+                # builtins.trace "${relPath}: ${lib.boolToString includePath}"
+              includePath
+            );
+            inherit src;
+          };
+
+        # Filter only files needed to build project dependencies
+        #
+        # To get good build times it's vitally important to not have to
+        # rebuild derivation needlessly. The way Nix caches things
+        # is very simple: if any input file changed, derivation needs to
+        # be rebuild.
+        #
+        # For this reason this filter function strips the `src` from
+        # any files that are not relevant to the build.
+        #
+        # Like `filterWorkspaceFiles` but doesn't even need *.rs files
+        # (because they are not used for building dependencies)
+        filterWorkspaceDepsBuildFiles = src: filterSrcWithRegexes filterWorkspaceDepsBuildFilesRegex src;
+
+
+        # Filter only files relevant to building the workspace
+        filterWorkspaceBuildFiles = src: filterSrcWithRegexes (filterWorkspaceDepsBuildFilesRegex ++ [ ".*\.rs" ]) src;
+
+
         outputs = (flakeboxLib.craneMultiBuild { toolchains = toolchainsStd; })
           (craneLib':
             let
               craneLib = (craneLib'.overrideArgs {
                 pname = "flexbox-multibuild";
-                src = rustSrc;
+                src = filterWorkspaceBuildFiles commonSrc;
               }).overrideArgs commonArgs;
             in
             rec {
@@ -83,9 +121,7 @@
 
               fedimint-clientd = craneLib.buildPackageGroup {
                 pname = "fedimint-clientd";
-                packages = [
-                  "fedimint-clientd"
-                ];
+                packages = [ "fedimint-clientd" ];
                 mainProgram = "fedimint-clientd";
               };
 
@@ -102,11 +138,15 @@
       {
         legacyPackages = outputs;
         packages = { default = outputs.fedimint-clientd; };
+
         devShells = flakeboxLib.mkShells {
           packages = [ ];
+
           buildInputs = commonArgs.buildInputs;
+
           nativeBuildInputs =
             [ pkgs.mprocs pkgs.go pkgs.bun commonArgs.nativeBuildInputs ];
+
           shellHook = ''
             export RUSTFLAGS="--cfg tokio_unstable"
             export RUSTDOCFLAGS="--cfg tokio_unstable"

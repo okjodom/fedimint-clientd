@@ -126,7 +126,7 @@
               };
 
               fedimint-clientd-oci = pkgs.dockerTools.buildLayeredImage {
-                name = "fedimint-clientd";
+                name = "okjodom/fedimint-clientd";
                 contents = [ fedimint-clientd ];
                 config = {
                   Cmd = [ "${fedimint-clientd}/bin/fedimint-clientd" ];

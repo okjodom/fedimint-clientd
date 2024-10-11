@@ -106,6 +106,14 @@
               packages = [ "fedimint-clientd" ];
               mainProgram = "fedimint-clientd";
             };
+
+            fedimint-clientd-oci = pkgs.dockerTools.buildLayeredImage {
+              name = "fedimint-clientd";
+              contents = [ fedimint-clientd ];
+              config = {
+                Cmd = [ "${fedimint-clientd}/bin/fedimint-clientd" ];
+              };
+            };
           }
         );
       in
